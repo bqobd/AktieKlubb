@@ -42,7 +42,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="flex items-center gap-2">
             <UserCircle className="w-6 h-6 text-gray-400" />
             <span className="text-gray-200 font-medium">
-              {user ? user.email?.split('@')[0] : 'Menu'}
+              {user ? user.email?.split('@')[0] : 'Menu!'}
             </span>
           </div>
         )}
