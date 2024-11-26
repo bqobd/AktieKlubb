@@ -1,116 +1,185 @@
 import axios from 'axios';
-import type { StockAnalysis, AnalysisScores, AnalysisDetails } from '../types';
+import type { Stock } from '../types';
+import { formatISO } from 'date-fns';
+
+const PROXY_BASE_URL = 'https://query2.finance.yahoo.com/v8/finance';
 
 export class StockAnalyzer {
-  private scores: AnalysisScores = {
-    growth: 0,
-    profitability: 0,
-    financialHealth: 0,
-    valuation: 0,
-    momentum: 0,
-    dividend: 0,
-    institutionalOwnership: 0
-  };
-
-  private maxScore = 5;
-  private analysisDetails: AnalysisDetails = {};
-
-  async analyzeStock(symbol: string): Promise<StockAnalysis> {
+  async searchStock(symbol: string): Promise<Stock> {
     try {
-      // Mock analysis for demo purposes since we can't access real APIs
-      await this.mockAnalysis();
+      if (!this.isValidSymbol(symbol)) {
+        throw new Error('Invalid stock symbol format');
+      }
+
+      const response = await axios.get(`${PROXY_BASE_URL}/quote`, {
+        params: {
+          symbols: symbol,
+        },
+        headers: {
+          'Accept': 'application/json',
+        }
+      });
+
+      const quote = response.data?.quoteResponse?.result?.[0];
+
+      if (!quote) {
+        throw new Error('Stock data not found');
+      }
+
+      const technicalScore = this.calculateTechnicalScore(quote);
+      const sentimentScore = this.calculateSentimentScore(quote);
+      const newsScore = this.calculateNewsScore(quote);
       
-      return this.generateRecommendation();
+      const stock: Stock = {
+        id: `${symbol}_${Date.now()}`,
+        symbol: symbol.toUpperCase(),
+        name: quote.longName || quote.shortName || symbol.toUpperCase(),
+        price: quote.regularMarketPrice || 0,
+        change: quote.regularMarketChangePercent || 0,
+        signal: this.calculateSignal(quote),
+        technicalScore,
+        sentimentScore,
+        newsScore,
+        lastUpdated: formatISO(new Date())
+      };
+
+      return stock;
+
     } catch (error) {
-      console.error('Analysis error:', error);
-      throw new Error('Failed to analyze stock');
+      console.error('Error searching stock:', error);
+      if (error instanceof Error) {
+        throw new Error(`Failed to fetch stock data: ${error.message}`);
+      }
+      throw new Error('Failed to fetch stock data. Please try again.');
     }
   }
 
-  private async mockAnalysis() {
-    // Mock growth analysis
-    this.scores.growth = Math.floor(Math.random() * 5) + 1;
-    this.analysisDetails.growth = [
-      `Revenue Growth: ${(Math.random() * 30).toFixed(1)}%`,
-      `Earnings Growth: ${(Math.random() * 25).toFixed(1)}%`
-    ];
+  async getHistoricalData(symbol: string) {
+    try {
+      const endDate = Math.floor(Date.now() / 1000);
+      const startDate = endDate - (365 * 24 * 60 * 60); // 1 year ago
 
-    // Mock profitability
-    this.scores.profitability = Math.floor(Math.random() * 5) + 1;
-    this.analysisDetails.profitability = [
-      `Profit Margin: ${(Math.random() * 20).toFixed(1)}%`,
-      `Operating Margin: ${(Math.random() * 25).toFixed(1)}%`,
-      `Return on Equity: ${(Math.random() * 30).toFixed(1)}%`
-    ];
+      const response = await axios.get(`${PROXY_BASE_URL}/chart/${symbol}`, {
+        params: {
+          period1: startDate,
+          period2: endDate,
+          interval: '1d',
+          includePrePost: false,
+        },
+        headers: {
+          'Accept': 'application/json',
+        }
+      });
 
-    // Mock financial health
-    this.scores.financialHealth = Math.floor(Math.random() * 5) + 1;
-    this.analysisDetails.financialHealth = [
-      `Current Ratio: ${(1 + Math.random() * 2).toFixed(2)}`,
-      `Debt to Equity: ${(Math.random() * 100).toFixed(1)}%`
-    ];
+      const result = response.data?.chart?.result?.[0];
+      if (!result) {
+        throw new Error('Historical data not found');
+      }
 
-    // Mock valuation
-    this.scores.valuation = Math.floor(Math.random() * 5) + 1;
-    this.analysisDetails.valuation = [
-      `P/E Ratio: ${(10 + Math.random() * 20).toFixed(1)}`,
-      `P/S Ratio: ${(1 + Math.random() * 5).toFixed(1)}`,
-      `P/B Ratio: ${(0.5 + Math.random() * 3).toFixed(1)}`
-    ];
+      const { timestamp, indicators } = result;
+      const { quote: [quotes] } = indicators;
 
-    // Mock momentum
-    this.scores.momentum = Math.floor(Math.random() * 5) + 1;
-    this.analysisDetails.momentum = [
-      `Price vs MA50: ${Math.random() > 0.5 ? 'Above' : 'Below'}`,
-      `Price vs MA200: ${Math.random() > 0.5 ? 'Above' : 'Below'}`,
-      `RSI: ${(30 + Math.random() * 40).toFixed(1)}`
-    ];
+      return timestamp.map((time: number, i: number) => ({
+        time: formatISO(new Date(time * 1000)).split('T')[0],
+        open: quotes.open[i],
+        high: quotes.high[i],
+        low: quotes.low[i],
+        close: quotes.close[i],
+        volume: quotes.volume[i]
+      })).filter((item: any) => 
+        item.open && item.high && item.low && item.close && item.volume
+      );
 
-    // Mock dividend
-    this.scores.dividend = Math.floor(Math.random() * 5) + 1;
-    this.analysisDetails.dividend = [
-      `Dividend Yield: ${(Math.random() * 5).toFixed(1)}%`,
-      `Payout Ratio: ${(Math.random() * 75).toFixed(1)}%`
-    ];
-
-    // Mock institutional ownership
-    this.scores.institutionalOwnership = Math.floor(Math.random() * 5) + 1;
-    this.analysisDetails.institutionalOwnership = [
-      `Institutional Ownership: ${(Math.random() * 80).toFixed(1)}%`,
-      `Insider Ownership: ${(Math.random() * 20).toFixed(1)}%`
-    ];
+    } catch (error) {
+      console.error('Error fetching historical data:', error);
+      throw new Error('Failed to fetch historical data');
+    }
   }
 
-  private generateRecommendation(): StockAnalysis {
-    const totalScore = Object.values(this.scores).reduce((a, b) => a + b, 0);
-    const maxPossibleScore = Object.keys(this.scores).length * this.maxScore;
-    const scorePercentage = (totalScore / maxPossibleScore) * 100;
+  private isValidSymbol(symbol: string): boolean {
+    return /^[A-Za-z.-]{1,10}$/.test(symbol);
+  }
 
-    let recommendation: 'STRONG BUY' | 'BUY' | 'NEUTRAL' | 'HOLD';
-    let recommendationText: string;
+  private calculateSignal(quote: any): 'buy' | 'sell' | 'neutral' {
+    let signalScore = 0;
+    
+    // Price momentum
+    const priceChange = quote.regularMarketChangePercent || 0;
+    if (priceChange > 2) signalScore += 1;
+    if (priceChange < -2) signalScore -= 1;
+    
+    // Moving average
+    const currentPrice = quote.regularMarketPrice || 0;
+    const fiftyDayAvg = quote.fiftyDayAverage || 0;
+    
+    if (currentPrice > fiftyDayAvg) signalScore += 1;
+    if (currentPrice < fiftyDayAvg) signalScore -= 1;
+    
+    // Volume analysis
+    const avgVolume = quote.averageDailyVolume3Month || 0;
+    const currentVolume = quote.regularMarketVolume || 0;
+    if (currentVolume > avgVolume * 1.5) signalScore += 1;
+    if (currentVolume < avgVolume * 0.5) signalScore -= 1;
+    
+    // Determine final signal
+    if (signalScore >= 2) return 'buy';
+    if (signalScore <= -2) return 'sell';
+    return 'neutral';
+  }
 
-    if (scorePercentage >= 80) {
-      recommendation = 'STRONG BUY';
-      recommendationText = 'The stock looks very attractive on all key metrics.';
-    } else if (scorePercentage >= 60) {
-      recommendation = 'BUY';
-      recommendationText = 'The stock looks generally good but has some weaker points.';
-    } else if (scorePercentage >= 40) {
-      recommendation = 'NEUTRAL';
-      recommendationText = 'The stock has both strengths and weaknesses. More research needed.';
-    } else {
-      recommendation = 'HOLD';
-      recommendationText = 'The stock has several red flags. Look for better alternatives.';
-    }
+  private calculateTechnicalScore(quote: any): number {
+    let score = 5;
+    
+    const price = quote.regularMarketPrice || 0;
+    const ma50 = quote.fiftyDayAverage || 0;
+    const ma200 = quote.twoHundredDayAverage || 0;
+    
+    if (price > ma50) score += 1;
+    if (price > ma200) score += 1;
+    
+    const avgVolume = quote.averageDailyVolume3Month || 0;
+    const currentVolume = quote.regularMarketVolume || 0;
+    if (currentVolume > avgVolume) score += 1;
+    
+    const priceChange = quote.regularMarketChangePercent || 0;
+    if (priceChange > 0) score += 1;
+    if (priceChange > 5) score += 1;
+    
+    return Math.min(10, Math.max(1, score));
+  }
 
-    return {
-      scores: this.scores,
-      details: this.analysisDetails,
-      totalScore,
-      maxScore: maxPossibleScore,
-      scorePercentage,
-      recommendation,
-      recommendationText
-    };
+  private calculateSentimentScore(quote: any): number {
+    let score = 5;
+    
+    const priceChange = quote.regularMarketChangePercent || 0;
+    if (priceChange > 5) score += 2;
+    if (priceChange > 2) score += 1;
+    if (priceChange < -2) score -= 1;
+    if (priceChange < -5) score -= 2;
+    
+    const avgVolume = quote.averageDailyVolume3Month || 0;
+    const currentVolume = quote.regularMarketVolume || 0;
+    if (currentVolume > avgVolume * 2) score += 1;
+    if (currentVolume > avgVolume * 3) score += 1;
+    
+    return Math.min(10, Math.max(1, score));
+  }
+
+  private calculateNewsScore(quote: any): number {
+    let score = 5;
+    
+    const price = quote.regularMarketPrice || 0;
+    const ma50 = quote.fiftyDayAverage || 0;
+    const priceChange = quote.regularMarketChangePercent || 0;
+    
+    if (price > ma50) score += 1;
+    if (price > ma50 * 1.05) score += 1;
+    
+    if (priceChange > 3) score += 1;
+    if (priceChange > 5) score += 1;
+    if (priceChange < -3) score -= 1;
+    if (priceChange < -5) score -= 1;
+    
+    return Math.min(10, Math.max(1, score));
   }
 }

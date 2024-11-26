@@ -1,110 +1,97 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createChart, ColorType, CrosshairMode } from 'lightweight-charts';
 import { AlertTriangle } from 'lucide-react';
+import { StockAnalyzer } from '../services/StockAnalyzer';
 import type { Stock } from '../types';
 
 interface TechnicalAnalysisProps {
   stocks: Stock[];
 }
 
+const analyzer = new StockAnalyzer();
+
 export const TechnicalAnalysis: React.FC<TechnicalAnalysisProps> = ({ stocks }) => {
   const [selectedStock, setSelectedStock] = useState<Stock | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const [chartData, setChartData] = useState<any[]>([]);
 
   useEffect(() => {
     if (!selectedStock || !chartContainerRef.current) return;
 
-    // Mock data generation for demonstration
-    const generateMockData = () => {
-      const data = [];
-      const basePrice = selectedStock.price;
-      const baseTime = new Date();
-      baseTime.setDate(baseTime.getDate() - 200); // Start 200 days ago
+    const loadChartData = async () => {
+      setIsLoading(true);
+      setError(null);
 
-      for (let i = 0; i < 200; i++) {
-        const time = new Date(baseTime);
-        time.setDate(time.getDate() + i);
+      try {
+        const historicalData = await analyzer.getHistoricalData(selectedStock.symbol);
         
-        const open = basePrice * (1 + (Math.random() - 0.5) * 0.02);
-        const high = open * (1 + Math.random() * 0.01);
-        const low = open * (1 - Math.random() * 0.01);
-        const close = (high + low) / 2;
-        const volume = Math.floor(Math.random() * 1000000) + 500000;
-
-        data.push({
-          time: time.toISOString().split('T')[0],
-          open,
-          high,
-          low,
-          close,
-          volume
+        const chart = createChart(chartContainerRef.current, {
+          layout: {
+            background: { type: ColorType.Solid, color: 'transparent' },
+            textColor: '#D1D5DB',
+          },
+          grid: {
+            vertLines: { color: '#374151' },
+            horzLines: { color: '#374151' },
+          },
+          crosshair: {
+            mode: CrosshairMode.Normal,
+          },
+          rightPriceScale: {
+            borderColor: '#374151',
+          },
+          timeScale: {
+            borderColor: '#374151',
+            timeVisible: true,
+          },
         });
+
+        const candlestickSeries = chart.addCandlestickSeries({
+          upColor: '#10B981',
+          downColor: '#EF4444',
+          borderUpColor: '#10B981',
+          borderDownColor: '#EF4444',
+          wickUpColor: '#10B981',
+          wickDownColor: '#EF4444',
+        });
+
+        candlestickSeries.setData(historicalData);
+
+        // Add volume series
+        const volumeSeries = chart.addHistogramSeries({
+          color: '#60A5FA',
+          priceFormat: {
+            type: 'volume',
+          },
+          priceScaleId: '',
+          scaleMargins: {
+            top: 0.8,
+            bottom: 0,
+          },
+        });
+
+        volumeSeries.setData(
+          historicalData.map(item => ({
+            time: item.time,
+            value: item.volume,
+            color: item.close > item.open ? '#10B981' : '#EF4444',
+          }))
+        );
+
+        chart.timeScale().fitContent();
+
+        return () => {
+          chart.remove();
+        };
+      } catch (err) {
+        setError('Failed to load chart data');
+      } finally {
+        setIsLoading(false);
       }
-      return data;
     };
 
-    const chartData = generateMockData();
-    setChartData(chartData);
-
-    const chart = createChart(chartContainerRef.current, {
-      layout: {
-        background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#D1D5DB',
-      },
-      grid: {
-        vertLines: { color: '#374151' },
-        horzLines: { color: '#374151' },
-      },
-      crosshair: {
-        mode: CrosshairMode.Normal,
-      },
-      rightPriceScale: {
-        borderColor: '#374151',
-      },
-      timeScale: {
-        borderColor: '#374151',
-        timeVisible: true,
-      },
-    });
-
-    const candlestickSeries = chart.addCandlestickSeries({
-      upColor: '#10B981',
-      downColor: '#EF4444',
-      borderUpColor: '#10B981',
-      borderDownColor: '#EF4444',
-      wickUpColor: '#10B981',
-      wickDownColor: '#EF4444',
-    });
-
-    candlestickSeries.setData(chartData);
-
-    // Add volume series
-    const volumeSeries = chart.addHistogramSeries({
-      color: '#60A5FA',
-      priceFormat: {
-        type: 'volume',
-      },
-      priceScaleId: '',
-      scaleMargins: {
-        top: 0.8,
-        bottom: 0,
-      },
-    });
-
-    volumeSeries.setData(
-      chartData.map(item => ({
-        time: item.time,
-        value: item.volume,
-        color: item.close > item.open ? '#10B981' : '#EF4444',
-      }))
-    );
-
-    chart.timeScale().fitContent();
-
-    return () => {
-      chart.remove();
-    };
+    loadChartData();
   }, [selectedStock]);
 
   if (stocks.length === 0) {
@@ -164,36 +151,21 @@ export const TechnicalAnalysis: React.FC<TechnicalAnalysisProps> = ({ stocks }) 
             />
           </div>
 
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
-            <div className="h-[600px]" ref={chartContainerRef} />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <IndicatorCard
-              title="Moving Averages"
-              indicators={[
-                { name: 'MA20', value: 'Above Price', bullish: true },
-                { name: 'MA50', value: 'Above Price', bullish: true },
-                { name: 'MA200', value: 'Below Price', bullish: false },
-              ]}
-            />
-            <IndicatorCard
-              title="Oscillators"
-              indicators={[
-                { name: 'RSI (14)', value: '58.24', bullish: true },
-                { name: 'MACD', value: 'Bullish', bullish: true },
-                { name: 'Stochastic', value: 'Overbought', bullish: false },
-              ]}
-            />
-            <IndicatorCard
-              title="Pivot Points"
-              indicators={[
-                { name: 'R1', value: '$178.52', neutral: true },
-                { name: 'Pivot', value: '$175.30', neutral: true },
-                { name: 'S1', value: '$171.85', neutral: true },
-              ]}
-            />
-          </div>
+          {error ? (
+            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+              <p className="text-red-600 dark:text-red-400">{error}</p>
+            </div>
+          ) : (
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
+              {isLoading ? (
+                <div className="h-[600px] flex items-center justify-center">
+                  <div className="text-gray-500 dark:text-gray-400">Loading chart...</div>
+                </div>
+              ) : (
+                <div className="h-[600px]" ref={chartContainerRef} />
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-6">
@@ -243,46 +215,6 @@ const TechnicalCard: React.FC<TechnicalCardProps> = ({ title, value, change, typ
             {change >= 0 ? '+' : ''}{change}%
           </div>
         )}
-      </div>
-    </div>
-  );
-};
-
-interface Indicator {
-  name: string;
-  value: string;
-  bullish?: boolean;
-  neutral?: boolean;
-}
-
-interface IndicatorCardProps {
-  title: string;
-  indicators: Indicator[];
-}
-
-const IndicatorCard: React.FC<IndicatorCardProps> = ({ title, indicators }) => {
-  return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
-      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-        {title}
-      </h3>
-      <div className="space-y-3">
-        {indicators.map((indicator, index) => (
-          <div key={index} className="flex justify-between items-center">
-            <span className="text-gray-600 dark:text-gray-400">
-              {indicator.name}
-            </span>
-            <span className={`font-medium ${
-              indicator.neutral
-                ? 'text-gray-900 dark:text-white'
-                : indicator.bullish
-                  ? 'text-green-600 dark:text-green-400'
-                  : 'text-red-600 dark:text-red-400'
-            }`}>
-              {indicator.value}
-            </span>
-          </div>
-        ))}
       </div>
     </div>
   );
